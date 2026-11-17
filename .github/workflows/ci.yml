@@ -15,6 +15,7 @@ concurrency:
 env:
   NDK_VERSION: 26.1.10909125
   JAVA_VERSION: '17'
+  XEO_KEYSTORE_BASE64: ${{ secrets.XEO_KEYSTORE_BASE64 }}
 
 jobs:
   build:
@@ -95,7 +96,7 @@ jobs:
       # Required secrets: XEO_KEYSTORE_BASE64, XEO_KEYSTORE_PASSWORD,
       # XEO_KEY_ALIAS, and XEO_KEY_PASSWORD.
       - name: Configure release signing key
-        if: ${{ secrets.XEO_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.XEO_KEYSTORE_BASE64 != '' }}
         env:
           XEO_KEYSTORE_BASE64: ${{ secrets.XEO_KEYSTORE_BASE64 }}
           XEO_KEYSTORE_PASSWORD: ${{ secrets.XEO_KEYSTORE_PASSWORD }}
