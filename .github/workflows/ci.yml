@@ -91,6 +91,28 @@ jobs:
           key: ndk-${{ runner.os }}-release-${{ hashFiles('app/src/main/cpp/**') }}
           restore-keys: ndk-${{ runner.os }}-release-
 
+      # Configure the persistent signing key when repository Actions secrets exist.
+      # Required secrets: XEO_KEYSTORE_BASE64, XEO_KEYSTORE_PASSWORD,
+      # XEO_KEY_ALIAS, and XEO_KEY_PASSWORD.
+      - name: Configure release signing key
+        if: ${{ secrets.XEO_KEYSTORE_BASE64 != '' }}
+        env:
+          XEO_KEYSTORE_BASE64: ${{ secrets.XEO_KEYSTORE_BASE64 }}
+          XEO_KEYSTORE_PASSWORD: ${{ secrets.XEO_KEYSTORE_PASSWORD }}
+          XEO_KEY_ALIAS: ${{ secrets.XEO_KEY_ALIAS }}
+          XEO_KEY_PASSWORD: ${{ secrets.XEO_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYSTORE_PATH="$RUNNER_TEMP/xeo-release.jks"
+          printf '%s' "$XEO_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          {
+            echo "XEO_KEYSTORE_PATH=$KEYSTORE_PATH"
+            echo "XEO_KEYSTORE_PASSWORD=$XEO_KEYSTORE_PASSWORD"
+            echo "XEO_KEY_ALIAS=$XEO_KEY_ALIAS"
+            echo "XEO_KEY_PASSWORD=$XEO_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - name: Build release APK
         run: |
           ./gradlew assembleRelease --no-daemon --stacktrace
