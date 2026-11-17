@@ -73,40 +73,53 @@ public final class GameLibraryManager {
             }
         }
 
-        // Also include games imported as extracted folders. These are copied to
-        // app-specific storage because the native emulator needs real filesystem paths.
+        // Each imported folder represents one game. Only index its main
+        // default.xex; nested system executables are game dependencies, not games.
         final File importedRoot = mContext.getExternalFilesDir("games");
         if (importedRoot != null && importedRoot.isDirectory()) {
-            scanLocalDirectory(importedRoot, results);
+            final File[] importedGames = importedRoot.listFiles();
+            if (importedGames != null) {
+                for (final File gameFolder : importedGames) {
+                    if (!gameFolder.isDirectory()) continue;
+                    final File defaultXex = findDefaultXex(gameFolder);
+                    if (defaultXex != null && isValidLocalXex(defaultXex)) {
+                        final String uriString = Uri.fromFile(defaultXex).toString();
+                        boolean duplicate = false;
+                        for (final GameEntry existing : results) {
+                            if (existing.getUri().equals(uriString)) {
+                                duplicate = true;
+                                break;
+                            }
+                        }
+                        if (!duplicate) {
+                            results.add(new GameEntry(uriString, gameFolder.getName(),
+                                    defaultXex.getAbsolutePath(), null));
+                        }
+                    }
+                }
+            }
         }
 
         return results;
     }
 
-    private void scanLocalDirectory(@NonNull final File directory,
-                                    @NonNull final List<GameEntry> out) {
+    @Nullable
+    private File findDefaultXex(@NonNull final File directory) {
         final File[] children = directory.listFiles();
-        if (children == null) return;
+        if (children == null) return null;
+        // Prefer a default.xex in this directory before searching subfolders.
         for (final File child : children) {
-            if (child.isDirectory()) {
-                scanLocalDirectory(child, out);
-            } else if (child.isFile()
-                    && child.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".xex")) {
-                final Uri uri = Uri.fromFile(child);
-                final String uriString = uri.toString();
-                boolean duplicate = false;
-                for (final GameEntry existing : out) {
-                    if (existing.getUri().equals(uriString)) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (!duplicate && isValidLocalXex(child)) {
-                    out.add(new GameEntry(uriString, stripExtension(child.getName()),
-                            child.getAbsolutePath(), null));
-                }
+            if (child.isFile() && "default.xex".equalsIgnoreCase(child.getName())) {
+                return child;
             }
         }
+        for (final File child : children) {
+            if (child.isDirectory()) {
+                final File found = findDefaultXex(child);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     private boolean isValidLocalXex(@NonNull final File file) {
