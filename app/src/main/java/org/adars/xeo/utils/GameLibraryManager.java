@@ -62,15 +62,15 @@ public final class GameLibraryManager {
     public List<GameEntry> scanLibrary() {
         final List<GameEntry> results = new ArrayList<>();
         final String rootUriString = getLibraryRoot();
-        if (rootUriString.isEmpty()) return results;
-
-        try {
-            final Uri treeUri = Uri.parse(rootUriString);
-            final Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
-                    treeUri, DocumentsContract.getTreeDocumentId(treeUri));
-            scanDirectory(childrenUri, treeUri, results);
-        } catch (final Exception e) {
-            // URI may have been revoked — silently return empty list.
+        if (!rootUriString.isEmpty()) {
+            try {
+                final Uri treeUri = Uri.parse(rootUriString);
+                final Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                        treeUri, DocumentsContract.getTreeDocumentId(treeUri));
+                scanDirectory(childrenUri, treeUri, results);
+            } catch (final Exception e) {
+                // URI may have been revoked — continue scanning app-imported games.
+            }
         }
 
         // Also include games imported as extracted folders. These are copied to
