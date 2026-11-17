@@ -15,6 +15,8 @@ concurrency:
 env:
   NDK_VERSION: 26.1.10909125
   JAVA_VERSION: '17'
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
   XEO_KEYSTORE_BASE64: ${{ secrets.XEO_KEYSTORE_BASE64 }}
 
 jobs:
@@ -66,11 +68,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           validate-wrappers: false
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 11076708
 
       - name: Install NDK and CMake
         run: |
@@ -158,11 +155,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           validate-wrappers: false
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 11076708
 
       - name: Run lint
         run: |
