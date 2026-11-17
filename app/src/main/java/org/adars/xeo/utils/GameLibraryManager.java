@@ -13,6 +13,8 @@ import androidx.preference.PreferenceManager;
 import android.os.ParcelFileDescriptor;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -71,7 +73,51 @@ public final class GameLibraryManager {
             // URI may have been revoked — silently return empty list.
         }
 
+        // Also include games imported as extracted folders. These are copied to
+        // app-specific storage because the native emulator needs real filesystem paths.
+        final File importedRoot = mContext.getExternalFilesDir("games");
+        if (importedRoot != null && importedRoot.isDirectory()) {
+            scanLocalDirectory(importedRoot, results);
+        }
+
         return results;
+    }
+
+    private void scanLocalDirectory(@NonNull final File directory,
+                                    @NonNull final List<GameEntry> out) {
+        final File[] children = directory.listFiles();
+        if (children == null) return;
+        for (final File child : children) {
+            if (child.isDirectory()) {
+                scanLocalDirectory(child, out);
+            } else if (child.isFile()
+                    && child.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".xex")) {
+                final Uri uri = Uri.fromFile(child);
+                final String uriString = uri.toString();
+                boolean duplicate = false;
+                for (final GameEntry existing : out) {
+                    if (existing.getUri().equals(uriString)) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate && isValidLocalXex(child)) {
+                    out.add(new GameEntry(uriString, stripExtension(child.getName()),
+                            child.getAbsolutePath(), null));
+                }
+            }
+        }
+    }
+
+    private boolean isValidLocalXex(@NonNull final File file) {
+        try (FileInputStream input = new FileInputStream(file)) {
+            final byte[] magic = new byte[4];
+            if (input.read(magic) != 4) return false;
+            final String signature = new String(magic, StandardCharsets.US_ASCII);
+            return "XEX1".equals(signature) || "XEX2".equals(signature);
+        } catch (final Exception ignored) {
+            return false;
+        }
     }
 
     // -------------------------------------------------------------------------
