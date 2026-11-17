@@ -8,6 +8,11 @@
         app:showAsAction="ifRoom" />
 
     <item
+        android:id="@+id/action_open_game_folder"
+        android:title="@string/action_open_game_folder"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_set_library_folder"
         android:title="@string/action_set_library_folder"
         app:showAsAction="never" />
