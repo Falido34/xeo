@@ -1,6 +1,5 @@
 package org.adars.xeo.ui;
 
-import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.net.Uri;
@@ -17,6 +16,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.documentfile.provider.DocumentFile;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -28,15 +28,15 @@ import org.adars.xeo.utils.GameEntry;
 import org.adars.xeo.utils.GameLibraryManager;
 import org.adars.xeo.utils.PathUtils;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * Main launcher screen: shows the scanned game library and lets the user
- * pick a title to launch, browse for a file directly, or open the GPU trace
- * viewer.
- */
+/** Main launcher screen for the game library and file/folder launch actions. */
 public class MainActivity extends AppCompatActivity
         implements GameLibraryAdapter.OnGameClickListener {
 
@@ -47,47 +47,30 @@ public class MainActivity extends AppCompatActivity
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private int mScanGeneration = 0;
 
-    // -------------------------------------------------------------------------
-    // Activity-result launchers (replaces deprecated startActivityForResult)
-    // -------------------------------------------------------------------------
-
-    /** Browse for any game file (.iso, .xex, .zar, etc.) */
     private final ActivityResultLauncher<String[]> mPickGameFile =
-            registerForActivityResult(
-                    new ActivityResultContracts.OpenDocument(),
-                    uri -> {
-                        if (uri != null) launchGame(uri);
-                    });
+            registerForActivityResult(new ActivityResultContracts.OpenDocument(),
+                    uri -> { if (uri != null) launchGame(uri); });
 
-    /** Browse for a GPU trace file */
     private final ActivityResultLauncher<String[]> mPickTraceFile =
-            registerForActivityResult(
-                    new ActivityResultContracts.OpenDocument(),
-                    uri -> {
-                        if (uri != null) launchGpuTraceViewer(uri);
-                    });
+            registerForActivityResult(new ActivityResultContracts.OpenDocument(),
+                    uri -> { if (uri != null) launchGpuTraceViewer(uri); });
 
-    /** Pick a folder to scan as the game library root */
     private final ActivityResultLauncher<Uri> mPickLibraryFolder =
-            registerForActivityResult(
-                    new ActivityResultContracts.OpenDocumentTree(),
-                    uri -> {
-                        if (uri != null) {
-                            // Persist read permission across reboots.
-                            try {
-                                getContentResolver().takePersistableUriPermission(
-                                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                            } catch (final SecurityException ignored) {
-                                // Continue with the temporary grant from the picker.
-                            }
-                            mLibraryManager.setLibraryRoot(uri.toString());
-                            refreshLibrary();
-                        }
-                    });
+            registerForActivityResult(new ActivityResultContracts.OpenDocumentTree(), uri -> {
+                if (uri != null) {
+                    persistTreePermission(uri);
+                    mLibraryManager.setLibraryRoot(uri.toString());
+                    refreshLibrary();
+                }
+            });
 
-    // -------------------------------------------------------------------------
-    // Lifecycle
-    // -------------------------------------------------------------------------
+    private final ActivityResultLauncher<Uri> mPickExtractedGameFolder =
+            registerForActivityResult(new ActivityResultContracts.OpenDocumentTree(), uri -> {
+                if (uri != null) {
+                    persistTreePermission(uri);
+                    copyAndLaunchExtractedGame(uri);
+                }
+            });
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
@@ -95,13 +78,10 @@ public class MainActivity extends AppCompatActivity
         setContentView(R.layout.activity_main);
 
         final androidx.appcompat.widget.Toolbar toolbar = findViewById(R.id.toolbar);
-        if (toolbar != null) {
-            setSupportActionBar(toolbar);
-        }
+        if (toolbar != null) setSupportActionBar(toolbar);
 
         mLibraryManager = new GameLibraryManager(this);
         mScanExecutor = Executors.newSingleThreadExecutor();
-
         mEmptyView = findViewById(R.id.tv_empty);
 
         final RecyclerView recyclerView = findViewById(R.id.rv_games);
@@ -109,9 +89,7 @@ public class MainActivity extends AppCompatActivity
         mAdapter = new GameLibraryAdapter(this);
         recyclerView.setAdapter(mAdapter);
 
-        // If launched via file open intent, hand off immediately.
         handleIncomingIntent(getIntent());
-
         refreshLibrary();
     }
 
@@ -123,9 +101,7 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     protected void onDestroy() {
-        if (mScanExecutor != null) {
-            mScanExecutor.shutdownNow();
-        }
+        if (mScanExecutor != null) mScanExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -141,6 +117,9 @@ public class MainActivity extends AppCompatActivity
         if (id == R.id.action_open_file) {
             mPickGameFile.launch(new String[]{"application/octet-stream", "*/*"});
             return true;
+        } else if (id == R.id.action_open_game_folder) {
+            mPickExtractedGameFolder.launch(null);
+            return true;
         } else if (id == R.id.action_set_library_folder) {
             mPickLibraryFolder.launch(null);
             return true;
@@ -154,48 +133,40 @@ public class MainActivity extends AppCompatActivity
         return super.onOptionsItemSelected(item);
     }
 
-    // -------------------------------------------------------------------------
-    // GameLibraryAdapter.OnGameClickListener
-    // -------------------------------------------------------------------------
-
     @Override
     public void onGameClick(final GameEntry game) {
         launchGame(Uri.parse(game.getUri()));
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
+    private void persistTreePermission(final Uri uri) {
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (final SecurityException ignored) {
+            // Keep the temporary picker grant if the provider does not persist it.
+        }
+    }
 
     private void handleIncomingIntent(final Intent intent) {
         if (intent == null) return;
         final Uri data = intent.getData();
-        if (data != null && Intent.ACTION_VIEW.equals(intent.getAction())) {
-            launchGame(data);
-        }
+        if (data != null && Intent.ACTION_VIEW.equals(intent.getAction())) launchGame(data);
     }
 
     private void launchGame(final Uri gameUri) {
-        // OpenDocument grants are often temporary. Persist the read grant so
-        // the selected game remains accessible after the picker is dismissed.
         if (ContentResolver.SCHEME_CONTENT.equals(gameUri.getScheme())) {
             try {
                 getContentResolver().takePersistableUriPermission(
                         gameUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (final SecurityException ignored) {
-                // Some third-party providers do not offer persistable grants.
-            }
+            } catch (final SecurityException ignored) { }
         }
         final String path = PathUtils.uriToNativePath(this, gameUri);
         if (path == null) {
-            Toast.makeText(this, R.string.error_cannot_open_file,
-                    Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.error_cannot_open_file, Toast.LENGTH_SHORT).show();
             return;
         }
         final Bundle cvars = new Bundle();
-        // "target" matches DEFINE_transient_path(target, ...) in xenia_main.cc.
         cvars.putString("target", path);
-
         final Intent intent = new Intent(this, EmulatorActivity.class);
         intent.setData(gameUri);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -204,10 +175,116 @@ public class MainActivity extends AppCompatActivity
         startActivity(intent);
     }
 
+    /**
+     * Xenia needs ordinary filesystem paths for the files beside default.xex.
+     * SAF document URIs cannot provide that directory layout to native code,
+     * so copy the selected extracted game tree into app-private external storage.
+     */
+    private void copyAndLaunchExtractedGame(final Uri treeUri) {
+        if (mScanExecutor == null || mScanExecutor.isShutdown()) return;
+        Toast.makeText(this, R.string.copying_game_folder, Toast.LENGTH_LONG).show();
+        mScanExecutor.execute(() -> {
+            String error = null;
+            File copiedRoot = null;
+            try {
+                final DocumentFile sourceRoot = DocumentFile.fromTreeUri(this, treeUri);
+                if (sourceRoot == null || !sourceRoot.isDirectory()) {
+                    throw new IllegalStateException("Selected item is not a folder");
+                }
+                final DocumentFile defaultXex = findDefaultXex(sourceRoot);
+                if (defaultXex == null) {
+                    throw new IllegalStateException("default.xex was not found");
+                }
+                final File gamesDir = getExternalFilesDir("games");
+                if (gamesDir == null) throw new IllegalStateException("Storage unavailable");
+                final String folderName = safeName(sourceRoot.getName());
+                copiedRoot = new File(gamesDir, folderName + "_" + System.currentTimeMillis());
+                if (!copiedRoot.mkdirs()) throw new IllegalStateException("Cannot create game folder");
+                copyDocumentTree(sourceRoot, copiedRoot);
+                final String relative = relativeDocumentPath(sourceRoot, defaultXex);
+                final File executable = new File(copiedRoot, relative);
+                if (!executable.isFile()) throw new IllegalStateException("Could not copy default.xex");
+                final File finalExecutable = executable;
+                mMainHandler.post(() -> launchNativePath(finalExecutable.getAbsolutePath()));
+                return;
+            } catch (final Exception e) {
+                error = e.getMessage();
+                if (copiedRoot != null) deleteRecursively(copiedRoot);
+            }
+            final String message = error == null ? getString(R.string.error_cannot_open_game_folder) : error;
+            mMainHandler.post(() -> Toast.makeText(this, message, Toast.LENGTH_LONG).show());
+        });
+    }
+
+    private DocumentFile findDefaultXex(final DocumentFile directory) {
+        final DocumentFile[] children = directory.listFiles();
+        for (final DocumentFile child : children) {
+            if (child.isDirectory()) {
+                final DocumentFile found = findDefaultXex(child);
+                if (found != null) return found;
+            } else if ("default.xex".equalsIgnoreCase(child.getName())) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    private void copyDocumentTree(final DocumentFile source, final File destination) throws Exception {
+        for (final DocumentFile child : source.listFiles()) {
+            final String name = child.getName();
+            if (name == null) continue;
+            final File target = new File(destination, name);
+            if (child.isDirectory()) {
+                if (!target.exists() && !target.mkdirs()) throw new java.io.IOException("Cannot create " + name);
+                copyDocumentTree(child, target);
+            } else {
+                try (InputStream in = getContentResolver().openInputStream(child.getUri());
+                     OutputStream out = new FileOutputStream(target)) {
+                    if (in == null) throw new java.io.IOException("Cannot read " + name);
+                    final byte[] buffer = new byte[1024 * 1024];
+                    int count;
+                    while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+                }
+            }
+        }
+    }
+
+    private String relativeDocumentPath(final DocumentFile root, final DocumentFile file) {
+        // Walk the SAF parent chain to preserve the executable's subdirectory.
+        String path = file.getName();
+        DocumentFile parent = file.getParentFile();
+        while (parent != null && !parent.getUri().equals(root.getUri())) {
+            path = parent.getName() + File.separator + path;
+            parent = parent.getParentFile();
+        }
+        return path;
+    }
+
+    private static String safeName(final String value) {
+        if (value == null || value.trim().isEmpty()) return "Xbox360Game";
+        return value.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    private static void deleteRecursively(final File file) {
+        if (file.isDirectory()) {
+            final File[] children = file.listFiles();
+            if (children != null) for (final File child : children) deleteRecursively(child);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        file.delete();
+    }
+
+    private void launchNativePath(final String path) {
+        final Bundle cvars = new Bundle();
+        cvars.putString("target", path);
+        final Intent intent = new Intent(this, EmulatorActivity.class);
+        intent.putExtra(WindowedAppActivity.EXTRA_CVARS, cvars);
+        startActivity(intent);
+    }
+
     private void launchGpuTraceViewer(final Uri traceUri) {
         final Bundle cvars = new Bundle();
         cvars.putString("target_trace_file", traceUri.toString());
-
         final Intent intent = new Intent(this, GpuTraceViewerActivity.class);
         intent.setData(traceUri);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
