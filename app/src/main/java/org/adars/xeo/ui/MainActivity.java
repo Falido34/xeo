@@ -210,7 +210,10 @@ public class MainActivity extends AppCompatActivity
                 final File executable = new File(copiedRoot, relative);
                 if (!executable.isFile()) throw new IllegalStateException("Could not copy default.xex");
                 final File finalExecutable = executable;
-                mMainHandler.post(() -> launchNativePath(finalExecutable.getAbsolutePath()));
+                mMainHandler.post(() -> {
+                    refreshLibrary();
+                    launchNativePath(finalExecutable.getAbsolutePath());
+                });
                 return;
             } catch (final Exception e) {
                 error = e.getMessage();
