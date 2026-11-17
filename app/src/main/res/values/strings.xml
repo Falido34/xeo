@@ -9,6 +9,8 @@
     <!-- Main screen -->
     <string name="empty_library_hint">No games found.\nTap the folder icon to set your game library, or use Open File to launch a game directly.</string>
     <string name="action_open_file">Open File…</string>
+    <string name="action_import_game_file">Import File</string>
+    <string name="action_import_game_folder">Import Folder</string>
     <string name="action_open_game_folder">Open Extracted Game Folder…</string>
     <string name="action_set_library_folder">Set Library Folder…</string>
     <string name="action_gpu_trace_viewer">GPU Trace Viewer…</string>
