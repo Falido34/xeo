@@ -22,6 +22,21 @@ bash setup.sh
 
 The resulting APK is written to `app/build/outputs/apk/release/app-release.apk`.
 
+For a repeatable release signature, configure these GitHub Actions repository
+secrets before distributing APKs:
+
+- `XEO_KEYSTORE_BASE64`: Base64-encoded persistent Java keystore (`.jks`).
+- `XEO_KEYSTORE_PASSWORD`: keystore password.
+- `XEO_KEY_ALIAS`: signing key alias.
+- `XEO_KEY_PASSWORD`: signing key password.
+
+Keep the same keystore and credentials for every release. Never commit the
+keystore or passwords to the repository. If these secrets are absent, CI uses
+the Android debug signing key as a temporary development fallback; that APK
+must not be treated as a stable update channel because the runner's debug key
+may change between builds. Keep `applicationId` unchanged and increase
+`versionCode` for every published update.
+
 ## Project layout
 
 ```
