@@ -4,23 +4,17 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
-import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 /**
- * Utilities for resolving Android content:// URIs to filesystem paths that
- * can be passed to the native Xenia layer via JNI.
+ * Resolves Android URIs to paths that the native Xenia layer can open.
  *
- * <p>On Android 10+ (API 29+) direct filesystem paths are increasingly
- * restricted; for those devices Xenia's native layer must open files via the
- * AssetFileDescriptor / ParcelFileDescriptor path (fd-based I/O).  This class
- * returns a /proc/self/fd/<N> path in that case so the native code can still
- * use open().</p>
+ * <p>For content:// URIs, prefer a /proc/self/fd path. This avoids relying on
+ * deprecated filesystem paths that are commonly inaccessible under Android's
+ * scoped-storage rules.</p>
  */
 public final class PathUtils {
 
@@ -32,53 +26,23 @@ public final class PathUtils {
      */
     @Nullable
     public static String uriToNativePath(@NonNull final Context context,
-                                          @NonNull final Uri uri) {
+                                         @NonNull final Uri uri) {
         final String scheme = uri.getScheme();
 
-        // Plain file:// URI — already a path.
         if (ContentResolver.SCHEME_FILE.equals(scheme)) {
             return uri.getPath();
         }
 
-        // content:// URI — try various resolution strategies.
         if (ContentResolver.SCHEME_CONTENT.equals(scheme)) {
-            // Strategy 1: DocumentProvider with primary external storage.
-            if (DocumentsContract.isDocumentUri(context, uri)) {
-                final String authority = uri.getAuthority();
-                if ("com.android.externalstorage.documents".equals(authority)) {
-                    final String docId = DocumentsContract.getDocumentId(uri);
-                    final String[] split = docId.split(":");
-                    final String type = split[0];
-                    if ("primary".equalsIgnoreCase(type)) {
-                        return Environment.getExternalStorageDirectory()
-                                + "/" + (split.length > 1 ? split[1] : "");
-                    }
-                }
-                // Strategy 2: MediaStore document.
-                if ("com.android.providers.media.documents".equals(authority)) {
-                    final String docId = DocumentsContract.getDocumentId(uri);
-                    final String[] split = docId.split(":");
-                    final Uri mediaUri;
-                    if ("image".equals(split[0])) {
-                        mediaUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-                    } else if ("video".equals(split[0])) {
-                        mediaUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
-                    } else {
-                        mediaUri = MediaStore.Files.getContentUri("external");
-                    }
-                    final Uri contentUri = MediaStore.Files.getContentUri("external");
-                    return queryDataColumn(context, contentUri,
-                            "_id=?", new String[]{split[1]});
-                }
-            }
+            // SAF and cloud providers may not expose a real filesystem path.
+            // Keep the descriptor open after detaching it: native code opens
+            // /proc/self/fd/<N> after the emulator activity starts.
+            final String fdPath = openAsFdPath(context, uri);
+            if (fdPath != null) return fdPath;
 
-            // Strategy 3: Generic MediaStore column query.
-            final String path = queryDataColumn(context, uri, null, null);
-            if (path != null) return path;
-
-            // Strategy 4: Expose via /proc/self/fd — works on all API levels
-            // because ParcelFileDescriptor is always available.
-            return openAsFdPath(context, uri);
+            // Compatibility fallback for providers that expose MediaStore's
+            // legacy DATA column but do not support openFileDescriptor().
+            return queryDataColumn(context, uri);
         }
 
         return null;
@@ -86,32 +50,35 @@ public final class PathUtils {
 
     @Nullable
     private static String queryDataColumn(@NonNull final Context context,
-                                           @NonNull final Uri uri,
-                                           @Nullable final String selection,
-                                           @Nullable final String[] selectionArgs) {
+                                          @NonNull final Uri uri) {
         try (Cursor cursor = context.getContentResolver().query(
                 uri, new String[]{MediaStore.MediaColumns.DATA},
-                selection, selectionArgs, null)) {
+                null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) {
                 final String path = cursor.getString(0);
                 if (path != null && !path.isEmpty()) return path;
             }
-        } catch (final Exception ignored) {}
+        } catch (final Exception ignored) {
+            // Most SAF providers intentionally do not expose filesystem paths.
+        }
         return null;
     }
 
     @Nullable
     private static String openAsFdPath(@NonNull final Context context,
-                                        @NonNull final Uri uri) {
+                                       @NonNull final Uri uri) {
         try {
-            android.os.ParcelFileDescriptor pfd =
+            final android.os.ParcelFileDescriptor pfd =
                     context.getContentResolver().openFileDescriptor(uri, "r");
             if (pfd == null) return null;
-            // Detach the file descriptor so that garbage collection won't close it
-            // before the native thread can access the symlink at /proc/self/fd/<N>.
+
+            // detachFd() transfers ownership to this process. Do not close the
+            // descriptor here: Xenia needs it to remain valid while opening
+            // the /proc/self/fd path.
             final int fd = pfd.detachFd();
             return "/proc/self/fd/" + fd;
-        } catch (final Exception ignored) {}
-        return null;
+        } catch (final Exception ignored) {
+            return null;
+        }
     }
 }
