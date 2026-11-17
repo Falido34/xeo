@@ -30,14 +30,24 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Clone xenia upstream directly — avoids submodule index registration issues.
-      # A shallow clone of the exact pinned submodule commit keeps CI fast and robust.
-      - name: Clone xenia-upstream
+      # Restore the pinned Xenia source tree (including initialized submodules)
+      # so normal app-only changes do not download the large native dependency tree again.
+      - name: Cache Xenia source tree
+        uses: actions/cache@v4
+        with:
+          path: xenia-upstream
+          key: xenia-8f55b4abf70d5041e2e9da65f8b2adcce002b115-${{ hashFiles('patches/**', 'setup.sh') }}
+
+      - name: Clone or restore xenia-upstream
         run: |
-          git init xenia-upstream
-          git -C xenia-upstream remote add origin https://github.com/xenia-canary/xenia-canary.git
+          set -euo pipefail
+          if [ ! -d xenia-upstream/.git ]; then
+            git init xenia-upstream
+            git -C xenia-upstream remote add origin https://github.com/xenia-canary/xenia-canary.git
+          fi
           git -C xenia-upstream fetch --depth 1 origin 8f55b4abf70d5041e2e9da65f8b2adcce002b115
-          git -C xenia-upstream checkout FETCH_HEAD
+          git -C xenia-upstream checkout --force FETCH_HEAD
+          git -C xenia-upstream submodule update --init --recursive --depth 1
           echo "xenia-upstream: $(git -C xenia-upstream rev-parse HEAD)"
 
       - name: Install shader compilation tools
@@ -80,11 +90,14 @@ jobs:
             find "$ANDROID_SDK_ROOT" -maxdepth 4 -type f -name sdkmanager -print || true
             exit 1
           fi
-          "$SDKMANAGER" \
-            "ndk;${{ env.NDK_VERSION }}" \
-            "cmake;3.22.1" \
-            --sdk_root="$ANDROID_SDK_ROOT" \
-            --channel=0
+          PACKAGES=()
+          [ -d "$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" ] || PACKAGES+=("ndk;${{ env.NDK_VERSION }}")
+          [ -d "$ANDROID_SDK_ROOT/cmake/3.22.1" ] || PACKAGES+=("cmake;3.22.1")
+          if [ "${#PACKAGES[@]}" -gt 0 ]; then
+            "$SDKMANAGER" "${PACKAGES[@]}" --sdk_root="$ANDROID_SDK_ROOT" --channel=0
+          else
+            echo "NDK and CMake already installed; skipping SDK package installation."
+          fi
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
 
       - name: Verify Gradle wrapper
@@ -97,7 +110,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/.cxx
-          key: ndk-${{ runner.os }}-release-${{ hashFiles('app/src/main/cpp/**') }}
+          key: ndk-${{ runner.os }}-26.1.10909125-release-${{ hashFiles('app/src/main/cpp/**', 'patches/**', 'setup.sh') }}
           restore-keys: ndk-${{ runner.os }}-release-
 
       # Configure the persistent signing key when repository Actions secrets exist.
