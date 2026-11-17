@@ -17,6 +17,7 @@
     <string name="action_settings">Settings</string>
     <string name="copying_game_folder">Copying game folder to Xeo storage. Large games may take several minutes…</string>
     <string name="copy_progress">Copied %1$s of %2$s</string>
+    <string name="import_folder_success">Game folder imported. You can now select it from the library.</string>
     <string name="error_cannot_open_game_folder">Could not open this game folder. Check that it contains default.xex and enough free storage.</string>
 
     <!-- Dialogs -->
