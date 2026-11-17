@@ -84,6 +84,11 @@ public class MainActivity extends AppCompatActivity
         mScanExecutor = Executors.newSingleThreadExecutor();
         mEmptyView = findViewById(R.id.tv_empty);
 
+        findViewById(R.id.button_import_file).setOnClickListener(
+                view -> mPickGameFile.launch(new String[]{"application/octet-stream", "*/*"}));
+        findViewById(R.id.button_import_folder).setOnClickListener(
+                view -> mPickExtractedGameFolder.launch(null));
+
         final RecyclerView recyclerView = findViewById(R.id.rv_games);
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         mAdapter = new GameLibraryAdapter(this);
