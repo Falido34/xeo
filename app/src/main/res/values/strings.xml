@@ -9,9 +9,12 @@
     <!-- Main screen -->
     <string name="empty_library_hint">No games found.\nTap the folder icon to set your game library, or use Open File to launch a game directly.</string>
     <string name="action_open_file">Open File…</string>
+    <string name="action_open_game_folder">Open Extracted Game Folder…</string>
     <string name="action_set_library_folder">Set Library Folder…</string>
     <string name="action_gpu_trace_viewer">GPU Trace Viewer…</string>
     <string name="action_settings">Settings</string>
+    <string name="copying_game_folder">Copying game folder to Xeo storage. Large games may take several minutes…</string>
+    <string name="error_cannot_open_game_folder">Could not open this game folder. Check that it contains default.xex and enough free storage.</string>
 
     <!-- Dialogs -->
     <string name="dialog_exit_title">Stop Emulation?</string>
