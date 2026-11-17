@@ -231,7 +231,9 @@ public class MainActivity extends AppCompatActivity
                 if (!copiedRoot.mkdirs()) throw new IllegalStateException("Cannot create game folder");
 
                 final long[] copiedBytes = {0L};
-                copyDocumentTree(sourceRoot, copiedRoot, totalBytes, copiedBytes, progressDialog);
+                final int[] lastProgress = {-1};
+                copyDocumentTree(sourceRoot, copiedRoot, totalBytes, copiedBytes,
+                        lastProgress, progressDialog);
 
                 final String relative = relativeDocumentPath(sourceRoot, defaultXex);
                 final File executable = new File(copiedRoot, relative);
@@ -274,6 +276,7 @@ public class MainActivity extends AppCompatActivity
 
     private void copyDocumentTree(final DocumentFile source, final File destination,
                                   final long totalBytes, final long[] copiedBytes,
+                                  final int[] lastProgress,
                                   final ProgressDialog progressDialog) throws Exception {
         for (final DocumentFile child : source.listFiles()) {
             final String name = child.getName();
@@ -283,7 +286,8 @@ public class MainActivity extends AppCompatActivity
                 if (!target.exists() && !target.mkdirs()) {
                     throw new java.io.IOException("Cannot create " + name);
                 }
-                copyDocumentTree(child, target, totalBytes, copiedBytes, progressDialog);
+                copyDocumentTree(child, target, totalBytes, copiedBytes,
+                        lastProgress, progressDialog);
             } else {
                 try (InputStream in = getContentResolver().openInputStream(child.getUri());
                      OutputStream out = new FileOutputStream(target)) {
@@ -297,14 +301,18 @@ public class MainActivity extends AppCompatActivity
                         if (totalBytes > 0) {
                             final int progress = (int) Math.min(1000L,
                                     current * 1000L / totalBytes);
-                            mMainHandler.post(() -> {
-                                if (!isFinishing() && !isDestroyed() && progressDialog.isShowing()) {
-                                    progressDialog.setIndeterminate(false);
-                                    progressDialog.setProgress(progress);
-                                    progressDialog.setMessage(getString(R.string.copy_progress,
-                                            formatBytes(current), formatBytes(totalBytes)));
-                                }
-                            });
+                            // Limit UI updates to at most 1,000 progress steps.
+                            if (progress > lastProgress[0]) {
+                                lastProgress[0] = progress;
+                                mMainHandler.post(() -> {
+                                    if (!isFinishing() && !isDestroyed() && progressDialog.isShowing()) {
+                                        progressDialog.setIndeterminate(false);
+                                        progressDialog.setProgress(progress);
+                                        progressDialog.setMessage(getString(R.string.copy_progress,
+                                                formatBytes(current), formatBytes(totalBytes)));
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -357,10 +365,10 @@ public class MainActivity extends AppCompatActivity
 
     private String relativeDocumentPath(final DocumentFile root, final DocumentFile file) {
         // Walk the SAF parent chain to preserve the executable's subdirectory.
-        String path = file.getName();
+        String path = safeName(file.getName());
         DocumentFile parent = file.getParentFile();
         while (parent != null && !parent.getUri().equals(root.getUri())) {
-            path = parent.getName() + File.separator + path;
+            path = safeName(parent.getName()) + File.separator + path;
             parent = parent.getParentFile();
         }
         return path;
