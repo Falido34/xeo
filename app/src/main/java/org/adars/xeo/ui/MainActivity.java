@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -26,6 +28,8 @@ import org.adars.xeo.utils.GameLibraryManager;
 import org.adars.xeo.utils.PathUtils;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Main launcher screen: shows the scanned game library and lets the user
@@ -38,6 +42,9 @@ public class MainActivity extends AppCompatActivity
     private GameLibraryManager mLibraryManager;
     private GameLibraryAdapter mAdapter;
     private TextView mEmptyView;
+    private ExecutorService mScanExecutor;
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    private int mScanGeneration = 0;
 
     // -------------------------------------------------------------------------
     // Activity-result launchers (replaces deprecated startActivityForResult)
@@ -88,6 +95,7 @@ public class MainActivity extends AppCompatActivity
         }
 
         mLibraryManager = new GameLibraryManager(this);
+        mScanExecutor = Executors.newSingleThreadExecutor();
 
         mEmptyView = findViewById(R.id.tv_empty);
 
@@ -106,6 +114,14 @@ public class MainActivity extends AppCompatActivity
     protected void onNewIntent(final Intent intent) {
         super.onNewIntent(intent);
         handleIncomingIntent(intent);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mScanExecutor != null) {
+            mScanExecutor.shutdownNow();
+        }
+        super.onDestroy();
     }
 
     @Override
@@ -155,6 +171,16 @@ public class MainActivity extends AppCompatActivity
     }
 
     private void launchGame(final Uri gameUri) {
+        // OpenDocument grants are often temporary. Persist the read grant so
+        // the selected game remains accessible after the picker is dismissed.
+        if (ContentResolver.SCHEME_CONTENT.equals(gameUri.getScheme())) {
+            try {
+                getContentResolver().takePersistableUriPermission(
+                        gameUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (final SecurityException ignored) {
+                // Some third-party providers do not offer persistable grants.
+            }
+        }
         final String path = PathUtils.uriToNativePath(this, gameUri);
         if (path == null) {
             Toast.makeText(this, R.string.error_cannot_open_file,
@@ -185,8 +211,16 @@ public class MainActivity extends AppCompatActivity
     }
 
     private void refreshLibrary() {
-        final List<GameEntry> games = mLibraryManager.scanLibrary();
-        mAdapter.submitList(games);
-        mEmptyView.setVisibility(games.isEmpty() ? View.VISIBLE : View.GONE);
+        if (mScanExecutor == null || mScanExecutor.isShutdown()) return;
+        final int generation = ++mScanGeneration;
+        mEmptyView.setVisibility(View.GONE);
+        mScanExecutor.execute(() -> {
+            final List<GameEntry> games = mLibraryManager.scanLibrary();
+            mMainHandler.post(() -> {
+                if (isFinishing() || isDestroyed() || generation != mScanGeneration) return;
+                mAdapter.submitList(games);
+                mEmptyView.setVisibility(games.isEmpty() ? View.VISIBLE : View.GONE);
+            });
+        });
     }
 }
