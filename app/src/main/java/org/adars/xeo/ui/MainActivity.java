@@ -243,7 +243,7 @@ public class MainActivity extends AppCompatActivity
                     if (progressDialog.isShowing()) progressDialog.dismiss();
                     if (isFinishing() || isDestroyed()) return;
                     refreshLibrary();
-                    launchNativePath(finalExecutable.getAbsolutePath());
+                    Toast.makeText(this, R.string.import_folder_success, Toast.LENGTH_LONG).show();
                 });
                 return;
             } catch (final Exception e) {
