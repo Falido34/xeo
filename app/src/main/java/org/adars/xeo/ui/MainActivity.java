@@ -1,5 +1,6 @@
 package org.adars.xeo.ui;
 
+import android.app.ProgressDialog;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.net.Uri;
@@ -33,6 +34,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -187,7 +189,18 @@ public class MainActivity extends AppCompatActivity
      */
     private void copyAndLaunchExtractedGame(final Uri treeUri) {
         if (mScanExecutor == null || mScanExecutor.isShutdown()) return;
-        Toast.makeText(this, R.string.copying_game_folder, Toast.LENGTH_LONG).show();
+
+        final ProgressDialog progressDialog = new ProgressDialog(this);
+        progressDialog.setTitle(R.string.action_import_game_folder);
+        progressDialog.setMessage(getString(R.string.copying_game_folder));
+        progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+        progressDialog.setIndeterminate(true);
+        progressDialog.setProgress(0);
+        progressDialog.setMax(1000);
+        progressDialog.setCancelable(false);
+        progressDialog.setCanceledOnTouchOutside(false);
+        progressDialog.show();
+
         mScanExecutor.execute(() -> {
             String error = null;
             File copiedRoot = null;
@@ -200,17 +213,33 @@ public class MainActivity extends AppCompatActivity
                 if (defaultXex == null) {
                     throw new IllegalStateException("default.xex was not found");
                 }
+
+                final long totalBytes = calculateTotalBytes(sourceRoot);
+                mMainHandler.post(() -> {
+                    if (!isFinishing() && !isDestroyed() && progressDialog.isShowing()) {
+                        progressDialog.setIndeterminate(totalBytes <= 0);
+                        progressDialog.setProgress(0);
+                        progressDialog.setMessage(getString(R.string.copy_progress, "0 B",
+                                formatBytes(totalBytes)));
+                    }
+                });
+
                 final File gamesDir = getExternalFilesDir("games");
                 if (gamesDir == null) throw new IllegalStateException("Storage unavailable");
                 final String folderName = safeName(sourceRoot.getName());
                 copiedRoot = new File(gamesDir, folderName + "_" + System.currentTimeMillis());
                 if (!copiedRoot.mkdirs()) throw new IllegalStateException("Cannot create game folder");
-                copyDocumentTree(sourceRoot, copiedRoot);
+
+                final long[] copiedBytes = {0L};
+                copyDocumentTree(sourceRoot, copiedRoot, totalBytes, copiedBytes, progressDialog);
+
                 final String relative = relativeDocumentPath(sourceRoot, defaultXex);
                 final File executable = new File(copiedRoot, relative);
                 if (!executable.isFile()) throw new IllegalStateException("Could not copy default.xex");
                 final File finalExecutable = executable;
                 mMainHandler.post(() -> {
+                    if (progressDialog.isShowing()) progressDialog.dismiss();
+                    if (isFinishing() || isDestroyed()) return;
                     refreshLibrary();
                     launchNativePath(finalExecutable.getAbsolutePath());
                 });
@@ -219,9 +248,78 @@ public class MainActivity extends AppCompatActivity
                 error = e.getMessage();
                 if (copiedRoot != null) deleteRecursively(copiedRoot);
             }
-            final String message = error == null ? getString(R.string.error_cannot_open_game_folder) : error;
-            mMainHandler.post(() -> Toast.makeText(this, message, Toast.LENGTH_LONG).show());
+            final String message = error == null
+                    ? getString(R.string.error_cannot_open_game_folder) : error;
+            mMainHandler.post(() -> {
+                if (progressDialog.isShowing()) progressDialog.dismiss();
+                if (!isFinishing() && !isDestroyed()) {
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                }
+            });
         });
+    }
+
+    private long calculateTotalBytes(final DocumentFile directory) {
+        long total = 0L;
+        for (final DocumentFile child : directory.listFiles()) {
+            if (child.isDirectory()) {
+                total += calculateTotalBytes(child);
+            } else {
+                final long length = child.length();
+                if (length > 0) total += length;
+            }
+        }
+        return total;
+    }
+
+    private void copyDocumentTree(final DocumentFile source, final File destination,
+                                  final long totalBytes, final long[] copiedBytes,
+                                  final ProgressDialog progressDialog) throws Exception {
+        for (final DocumentFile child : source.listFiles()) {
+            final String name = child.getName();
+            if (name == null) continue;
+            final File target = new File(destination, safeName(name));
+            if (child.isDirectory()) {
+                if (!target.exists() && !target.mkdirs()) {
+                    throw new java.io.IOException("Cannot create " + name);
+                }
+                copyDocumentTree(child, target, totalBytes, copiedBytes, progressDialog);
+            } else {
+                try (InputStream in = getContentResolver().openInputStream(child.getUri());
+                     OutputStream out = new FileOutputStream(target)) {
+                    if (in == null) throw new java.io.IOException("Cannot read " + name);
+                    final byte[] buffer = new byte[1024 * 1024];
+                    int count;
+                    while ((count = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, count);
+                        copiedBytes[0] += count;
+                        final long current = copiedBytes[0];
+                        if (totalBytes > 0) {
+                            final int progress = (int) Math.min(1000L,
+                                    current * 1000L / totalBytes);
+                            mMainHandler.post(() -> {
+                                if (!isFinishing() && !isDestroyed() && progressDialog.isShowing()) {
+                                    progressDialog.setIndeterminate(false);
+                                    progressDialog.setProgress(progress);
+                                    progressDialog.setMessage(getString(R.string.copy_progress,
+                                            formatBytes(current), formatBytes(totalBytes)));
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static String formatBytes(final long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(Locale.getDefault(), "%.1f KB",
+                bytes / 1024.0);
+        if (bytes < 1024L * 1024L * 1024L) return String.format(Locale.getDefault(), "%.1f MB",
+                bytes / (1024.0 * 1024.0));
+        return String.format(Locale.getDefault(), "%.2f GB",
+                bytes / (1024.0 * 1024.0 * 1024.0));
     }
 
     private DocumentFile findDefaultXex(final DocumentFile directory) {
