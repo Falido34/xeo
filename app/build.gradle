@@ -15,8 +15,8 @@ android {
         // API 24 = Android 7.0, minimum for Vulkan 1.0
         minSdk 24
         targetSdk 35
-        versionCode 6
-        versionName "0.5.3"
+        versionCode 7
+        versionName "0.5.4"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -39,6 +39,18 @@ android {
             // arm64-v8a: phones/tablets. x86_64: Android emulator / dev boxes.
             // 32-bit ABIs are unsupported — Xenia's JIT requires 64-bit address space.
             abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv("XEO_KEYSTORE_PATH")
+            if (keystorePath != null && !keystorePath.isEmpty()) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("XEO_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("XEO_KEY_ALIAS")
+                keyPassword System.getenv("XEO_KEY_PASSWORD")
+            }
         }
     }
 
@@ -66,7 +78,9 @@ android {
                     arguments "-DCMAKE_BUILD_TYPE=Release"
                 }
             }
-            signingConfig signingConfigs.debug
+            // Use the persistent release key when supplied by CI secrets.
+            // Debug signing remains available for development builds only.
+            signingConfig (System.getenv("XEO_KEYSTORE_PATH") ? signingConfigs.release : signingConfigs.debug)
         }
     }
 
