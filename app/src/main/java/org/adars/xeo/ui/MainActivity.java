@@ -74,8 +74,12 @@ public class MainActivity extends AppCompatActivity
                     uri -> {
                         if (uri != null) {
                             // Persist read permission across reboots.
-                            getContentResolver().takePersistableUriPermission(
-                                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            try {
+                                getContentResolver().takePersistableUriPermission(
+                                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            } catch (final SecurityException ignored) {
+                                // Continue with the temporary grant from the picker.
+                            }
                             mLibraryManager.setLibraryRoot(uri.toString());
                             refreshLibrary();
                         }
